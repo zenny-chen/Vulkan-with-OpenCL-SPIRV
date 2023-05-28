@@ -453,7 +453,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     printf("Current device %s variablePointersStorageBuffer\n", variablePointersFeature.variablePointersStorageBuffer ? "supports" : "does not support");
     printf("Current device %s variablePointers\n", variablePointersFeature.variablePointers ? "supports" : "does not support");
 
-    // Explicit enable shaderInt64 feature because some GPUs (e.g. Intel Iris Graphics) may have not enabled it.
+    // Explicitly enable shaderInt64 feature because some GPUs (e.g. Intel Iris Graphics) may have not enabled it by default.
     features2.features.shaderInt64 = VK_TRUE;
 
     // ==== Query the current selected device properties corresponding the above features ====
