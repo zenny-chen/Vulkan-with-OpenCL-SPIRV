@@ -63,6 +63,8 @@ static VkDevice s_specDevice = VK_NULL_HANDLE;
 static uint32_t s_specQueueFamilyIndex = 0;
 static VkPhysicalDeviceMemoryProperties s_memoryProperties = { 0 };
 
+static bool s_supportShaderNonSemanticInfo = false;
+
 static uint32_t s_maxWorkGroupSize = 0;
 
 static const char* const s_deviceTypes[] = {
@@ -402,6 +404,14 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
             supportCustomBorderColor = true;
             puts("Current device supports `VK_EXT_custom_border_color` extension!");
         }
+        if (strcmp(extProps[i].extensionName, VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME) == 0) {
+            puts("Current device supports `VK_KHR_variable_pointers` extension!");
+        }
+        if (strcmp(extProps[i].extensionName, VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME) == 0)
+        {
+            puts("Current device supports `VK_KHR_shader_non_semantic_info` extension!");
+            s_supportShaderNonSemanticInfo = true;
+        }
     }
 
     // ==== The following is query the specific extension features in the feature chaining form ====
@@ -420,11 +430,17 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
         .pNext = &customBorderColorFeature
     };
 
+    VkPhysicalDeviceVariablePointersFeatures variablePointersFeature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VARIABLE_POINTERS_FEATURES,
+        // link to subgroupSizeControlFeature node
+        .pNext = &subgroupSizeControlFeature
+    };
+
     // physical device feature 2
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        // link to subgroupSizeControlFeature node
-        .pNext = &subgroupSizeControlFeature
+        // link to variablePointersFeature node
+        .pNext = &variablePointersFeature
     };
 
     // Query all above features
@@ -434,6 +450,11 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     printf("Current device %s customBorderColorWithoutFormat!\n", customBorderColorFeature.customBorderColorWithoutFormat ? "supports" : "does not support");
     printf("Current device %s computeFullSubgroups\n", subgroupSizeControlFeature.computeFullSubgroups ? "supports" : "does not support");
     printf("Current device %s subgroupSizeControl\n", subgroupSizeControlFeature.subgroupSizeControl ? "supports" : "does not support");
+    printf("Current device %s variablePointersStorageBuffer\n", variablePointersFeature.variablePointersStorageBuffer ? "supports" : "does not support");
+    printf("Current device %s variablePointers\n", variablePointersFeature.variablePointers ? "supports" : "does not support");
+
+    // Explicit enable shaderInt64 feature because some GPUs (e.g. Intel Iris Graphics) may have not enabled it.
+    features2.features.shaderInt64 = VK_TRUE;
 
     // ==== Query the current selected device properties corresponding the above features ====
     // VK_EXT_custom_border_color properties
@@ -804,6 +825,12 @@ static void SyncAndReadBuffer(VkCommandBuffer commandBuffer, uint32_t queueFamil
     vkCmdCopyBuffer(commandBuffer, srcDeviceBuffer, dstHostBuffer, 1, &copyRegion);
 }
 
+static void SynchronizeExecution(VkCommandBuffer commandBuffer, uint32_t queueFamilyIndex)
+{
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+        0, NULL, 0, NULL, 0, NULL);
+}
+
 static VkResult CreateShaderModule(VkDevice device, const char* fileName, VkShaderModule* pShaderModule)
 {
     FILE* fp = OpenFileWithRead(fileName);
@@ -1060,7 +1087,162 @@ static VkResult CreateComputePipelineAdvanced(VkDevice device, VkShaderModule co
     return res;
 }
 
-static VkResult CreateDescriptorSets(VkDevice device, VkBuffer deviceBuffers[2], size_t bufferSize, VkDescriptorSetLayout descLayout,
+static VkResult CreateComputePipelineCLSPVSpec(VkDevice device, VkShaderModule computeShaderModule, VkPipeline computePipelines[2],
+    VkPipelineLayout* pPipelineLayout, VkDescriptorSetLayout* pDescLayout, uint32_t maxWorkGroupSizeForInc, uint32_t maxWorkGroupSizeForDouble)
+{
+    const VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[2] = {
+        {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}
+    };
+    const uint32_t bindingCount = (uint32_t)(sizeof(descriptorSetLayoutBindings) / sizeof(descriptorSetLayoutBindings[0]));
+    const VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        NULL, 0, bindingCount, descriptorSetLayoutBindings
+    };
+
+    VkResult res = vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, NULL, pDescLayout);
+    if (res != VK_SUCCESS)
+    {
+        printf("vkCreateDescriptorSetLayout failed: %d\n", res);
+        return res;
+    }
+
+    // PushConstant for the kernel 3rd parameter -- uint elemCount
+    const VkPushConstantRange pushConstRanges[1] = {
+        {
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            .offset = 0,
+            .size = sizeof(uint32_t)
+        }
+    };
+
+    const VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = pDescLayout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = pushConstRanges
+    };
+
+    res = vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, NULL, pPipelineLayout);
+    if (res != VK_SUCCESS)
+    {
+        printf("vkCreatePipelineLayout failed: %d\n", res);
+        return res;
+    }
+
+    // Create VkComputePipelineCreateInfo for IncKernel
+    const struct WorkGroupSizeType {
+        unsigned local_size_x_id;
+        unsigned local_size_y_id;
+        unsigned local_size_z_id;
+    } workGroupSizeForInc = { maxWorkGroupSizeForInc, 1U, 1U };
+
+    const VkSpecializationMapEntry mapEntriesForInc[3] = {
+        {
+            .constantID = 0,
+            .offset = (uint32_t)offsetof(struct WorkGroupSizeType, local_size_x_id),
+            .size = sizeof(workGroupSizeForInc.local_size_x_id)
+        },
+        {
+            .constantID = 1,
+            .offset = (uint32_t)offsetof(struct WorkGroupSizeType, local_size_y_id),
+            .size = sizeof(workGroupSizeForInc.local_size_y_id)
+        },
+        {
+            .constantID = 2,
+            .offset = (uint32_t)offsetof(struct WorkGroupSizeType, local_size_z_id),
+            .size = sizeof(workGroupSizeForInc.local_size_z_id)
+        }
+    };
+
+    const VkSpecializationInfo specializationInfoForInc = {
+        .mapEntryCount = 3,
+        .pMapEntries = mapEntriesForInc,
+        .dataSize = sizeof(workGroupSizeForInc),
+        .pData = &workGroupSizeForInc
+    };
+
+    const VkPipelineShaderStageCreateInfo shaderStageCreateInfoForInc = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = computeShaderModule,
+        .pName = "IncKernel",
+        .pSpecializationInfo = &specializationInfoForInc
+    };
+
+    const VkComputePipelineCreateInfo computePipelineCreateInfoForInc = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .stage = shaderStageCreateInfoForInc,
+        .layout = *pPipelineLayout,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = 0
+    };
+
+    // Create VkComputePipelineCreateInfo for DoubleKernel
+    const struct WorkGroupSizeType workGroupSizeForDouble = { maxWorkGroupSizeForDouble, 1U, 1U };
+
+    const VkSpecializationMapEntry mapEntriesForDouble[3] = {
+        {
+            .constantID = 0,
+            .offset = (uint32_t)offsetof(struct WorkGroupSizeType, local_size_x_id),
+            .size = sizeof(workGroupSizeForDouble.local_size_x_id)
+        },
+        {
+            .constantID = 1,
+            .offset = (uint32_t)offsetof(struct WorkGroupSizeType, local_size_y_id),
+            .size = sizeof(workGroupSizeForDouble.local_size_y_id)
+        },
+        {
+            .constantID = 2,
+            .offset = (uint32_t)offsetof(struct WorkGroupSizeType, local_size_z_id),
+            .size = sizeof(workGroupSizeForDouble.local_size_z_id)
+        }
+    };
+
+    const VkSpecializationInfo specializationInfoForDouble = {
+        .mapEntryCount = 3,
+        .pMapEntries = mapEntriesForDouble,
+        .dataSize = sizeof(workGroupSizeForDouble),
+        .pData = &workGroupSizeForDouble
+    };
+
+    const VkPipelineShaderStageCreateInfo shaderStageCreateInfoForDouble = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = computeShaderModule,
+        .pName = "DoubleKernel",
+        .pSpecializationInfo = &specializationInfoForDouble
+    };
+
+    const VkComputePipelineCreateInfo computePipelineCreateInfoForDouble = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .stage = shaderStageCreateInfoForDouble,
+        .layout = *pPipelineLayout,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = 0
+    };
+
+    res = vkCreateComputePipelines(device, VK_NULL_HANDLE, 2,
+        (const VkComputePipelineCreateInfo[]) { computePipelineCreateInfoForInc, computePipelineCreateInfoForDouble }, NULL, computePipelines);
+    if (res != VK_SUCCESS) {
+        printf("vkCreateComputePipelines failed: %d\n", res);
+    }
+
+    return res;
+}
+
+static VkResult CreateDescriptorSets(VkDevice device, const VkBuffer deviceBuffers[2], size_t bufferSize, VkDescriptorSetLayout descLayout,
     VkDescriptorPool* pDescriptorPool, VkDescriptorSet* pDescSets)
 {
     const VkDescriptorPoolCreateInfo descriptorPoolInfo = {
@@ -1597,12 +1779,250 @@ static void AdvancedComputeTest(void)
     puts("\n================ Complete advanced OpenCL with SPIR-V test ================\n");
 }
 
+static void CLSPVSpecComputeTest(void)
+{
+    puts("\n================ Begin OpenCL with SPIR-V specific test ================\n");
+
+    VkDeviceMemory deviceMemories[2] = { VK_NULL_HANDLE };
+    // deviceBuffers[0] as host temporal buffer, deviceBuffers[1] as device dst buffer, deviceBuffers[2] as device src buffer
+    VkBuffer deviceBuffers[3] = { VK_NULL_HANDLE };
+    VkShaderModule computeShaderModule = VK_NULL_HANDLE;
+    VkPipeline computePipelines[2] = { VK_NULL_HANDLE };
+    VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPoolForInc = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPoolForDouble = VK_NULL_HANDLE;
+    VkCommandPool commandPool = VK_NULL_HANDLE;
+    VkCommandBuffer commandBuffers[1] = { VK_NULL_HANDLE };
+    VkFence fence = VK_NULL_HANDLE;
+    uint32_t const commandBufferCount = (uint32_t)(sizeof(commandBuffers) / sizeof(commandBuffers[0]));
+
+    do
+    {
+        const uint32_t elemCount = 256;
+        const VkDeviceSize bufferSize = elemCount * sizeof(int);
+
+        VkResult result = AllocateMemoryAndBuffers(s_specDevice, &s_memoryProperties, deviceMemories, deviceBuffers, bufferSize, s_specQueueFamilyIndex);
+        if (result != VK_SUCCESS)
+        {
+            puts("AllocateMemoryAndBuffers failed!");
+            break;
+        }
+
+        result = CreateShaderModule(s_specDevice, "shaders/clspv_spec/clspv_spec.spv", &computeShaderModule);
+        if (result != VK_SUCCESS)
+        {
+            puts("CreateShaderModule failed!");
+            break;
+        }
+
+        const uint32_t maxWorkGroupSizeForInc = elemCount;
+        const uint32_t maxWorkGroupSizeForDouble = 64;
+
+        result = CreateComputePipelineCLSPVSpec(s_specDevice, computeShaderModule, computePipelines, &pipelineLayout, &descriptorSetLayout,
+            maxWorkGroupSizeForInc, maxWorkGroupSizeForDouble);
+        if (result != VK_SUCCESS)
+        {
+            puts("CreateComputePipeline failed!");
+            break;
+        }
+
+        // Create VkDescriptorSet object for IncKernel
+        const VkBuffer deviceBufferArrayForInc[2] = { deviceBuffers[1], deviceBuffers[2] };
+
+        // There's no need to destroy `descriptorSetForInc`, since VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT flag is not set
+        // in `flags` in `VkDescriptorPoolCreateInfo`
+        VkDescriptorSet descriptorSetForInc = VK_NULL_HANDLE;
+        result = CreateDescriptorSets(s_specDevice, deviceBufferArrayForInc, bufferSize, descriptorSetLayout, &descriptorPoolForInc, &descriptorSetForInc);
+        if (result != VK_SUCCESS)
+        {
+            puts("CreateDescriptorSets for IncKernel failed!");
+            break;
+        }
+
+        // Create VkDescriptorSet object for DoubleKernel
+        const VkBuffer deviceBufferArrayForDouble[2] = { deviceBuffers[1], deviceBuffers[1] };
+
+        // There's no need to destroy `descriptorSetForDouble`, since VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT flag is not set
+        // in `flags` in `VkDescriptorPoolCreateInfo`
+        VkDescriptorSet descriptorSetForDouble = VK_NULL_HANDLE;
+        result = CreateDescriptorSets(s_specDevice, deviceBufferArrayForDouble, bufferSize, descriptorSetLayout, &descriptorPoolForDouble, &descriptorSetForDouble);
+        if (result != VK_SUCCESS)
+        {
+            puts("CreateDescriptorSets for DoubleKernel failed!");
+            break;
+        }
+
+        result = InitializeCommandBuffer(s_specQueueFamilyIndex, s_specDevice, &commandPool, commandBuffers, commandBufferCount);
+        if (result != VK_SUCCESS)
+        {
+            puts("InitializeCommandBuffer failed!");
+            break;
+        }
+
+        VkQueue queue = VK_NULL_HANDLE;
+        vkGetDeviceQueue(s_specDevice, s_specQueueFamilyIndex, 0, &queue);
+
+        const VkCommandBufferBeginInfo cmdBufBeginInfo = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = NULL,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            .pInheritanceInfo = NULL
+        };
+        result = vkBeginCommandBuffer(commandBuffers[0], &cmdBufBeginInfo);
+        if (result != VK_SUCCESS)
+        {
+            printf("vkBeginCommandBuffer failed: %d\n", result);
+            break;
+        }
+
+        // Dispatch IncKernel
+        vkCmdBindPipeline(commandBuffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, computePipelines[0]);
+        vkCmdBindDescriptorSets(commandBuffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSetForInc, 0, NULL);
+
+        // PushConstant for the kernel 3rd parameter -- uint elemCount
+        vkCmdPushConstants(commandBuffers[0], pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(elemCount), &elemCount);
+
+        ClearDeviceBuffer(commandBuffers[0], deviceBuffers[1], bufferSize);
+        WriteBufferAndSync(commandBuffers[0], s_specQueueFamilyIndex, deviceBuffers[2], deviceBuffers[0], bufferSize);
+
+        vkCmdDispatch(commandBuffers[0], elemCount / maxWorkGroupSizeForInc, 1, 1);
+
+        SynchronizeExecution(commandBuffers[0], s_specQueueFamilyIndex);
+
+        // Dispatch DoubleKernel
+        vkCmdBindPipeline(commandBuffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, computePipelines[1]);
+        vkCmdBindDescriptorSets(commandBuffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSetForDouble, 0, NULL);
+        vkCmdDispatch(commandBuffers[0], elemCount / maxWorkGroupSizeForDouble, 1, 1);
+
+        SyncAndReadBuffer(commandBuffers[0], s_specQueueFamilyIndex, deviceBuffers[0], deviceBuffers[1], bufferSize);
+
+        result = vkEndCommandBuffer(commandBuffers[0]);
+        if (result != VK_SUCCESS)
+        {
+            printf("vkEndCommandBuffer failed: %d\n", result);
+            break;
+        }
+
+        const VkFenceCreateInfo fenceCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0
+        };
+        result = vkCreateFence(s_specDevice, &fenceCreateInfo, NULL, &fence);
+        if (result != VK_SUCCESS)
+        {
+            printf("vkCreateFence failed: %d\n", result);
+            break;
+        }
+
+        const VkSubmitInfo submit_info = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = NULL,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphores = NULL,
+            .pWaitDstStageMask = NULL,
+            .commandBufferCount = commandBufferCount,
+            .pCommandBuffers = commandBuffers,
+            .signalSemaphoreCount = 0,
+            .pSignalSemaphores = NULL
+        };
+        result = vkQueueSubmit(queue, 1, &submit_info, fence);
+        if (result != VK_SUCCESS)
+        {
+            printf("vkQueueSubmit failed: %d\n", result);
+            break;
+        }
+
+        result = vkWaitForFences(s_specDevice, 1, &fence, VK_TRUE, UINT64_MAX);
+        if (result != VK_SUCCESS)
+        {
+            printf("vkWaitForFences failed: %d\n", result);
+            break;
+        }
+
+        // Verify the result
+        void* hostBuffer = NULL;
+        result = vkMapMemory(s_specDevice, deviceMemories[0], 0, bufferSize, 0, &hostBuffer);
+        if (result != VK_SUCCESS)
+        {
+            printf("vkMapMemory failed: %d\n", result);
+            break;
+        }
+        int* dstMem = hostBuffer;
+        for (int i = 2; i < (int)elemCount; i++)
+        {
+            if (dstMem[i] != (i + 256) * 2)
+            {
+                printf("Result error @ %d, result is: %d\n", i, dstMem[i]);
+                break;
+            }
+        }
+        printf("IncKernel workgroup size = %d; DoubleKernel workgroup size: %d\n", dstMem[0], dstMem[1]);
+
+        vkUnmapMemory(s_specDevice, deviceMemories[0]);
+
+    } while (false);
+
+    if (fence != VK_NULL_HANDLE) {
+        vkDestroyFence(s_specDevice, fence, NULL);
+    }
+    if (commandPool != VK_NULL_HANDLE)
+    {
+        vkFreeCommandBuffers(s_specDevice, commandPool, commandBufferCount, commandBuffers);
+        vkDestroyCommandPool(s_specDevice, commandPool, NULL);
+    }
+    if (descriptorPoolForInc != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(s_specDevice, descriptorPoolForInc, NULL);
+    }
+    if (descriptorPoolForDouble != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(s_specDevice, descriptorPoolForDouble, NULL);
+    }
+    if (descriptorSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(s_specDevice, descriptorSetLayout, NULL);
+    }
+    if (pipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(s_specDevice, pipelineLayout, NULL);
+    }
+    for (size_t i = 0; i < sizeof(computePipelines) / sizeof(computePipelines[0]); ++i)
+    {
+        if (computePipelines[i] != VK_NULL_HANDLE) {
+            vkDestroyPipeline(s_specDevice, computePipelines[i], NULL);
+        }
+    }
+    if (computeShaderModule != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(s_specDevice, computeShaderModule, NULL);
+    }
+
+    for (size_t i = 0; i < sizeof(deviceBuffers) / sizeof(deviceBuffers[0]); i++)
+    {
+        if (deviceBuffers[i] != VK_NULL_HANDLE) {
+            vkDestroyBuffer(s_specDevice, deviceBuffers[i], NULL);
+        }
+    }
+    for (size_t i = 0; i < sizeof(deviceMemories) / sizeof(deviceMemories[0]); i++)
+    {
+        if (deviceMemories[i] != VK_NULL_HANDLE) {
+            vkFreeMemory(s_specDevice, deviceMemories[i], NULL);
+        }
+    }
+
+    puts("\n================ Complete OpenCL with SPIR-V specific test ================\n");
+}
+
 int main(int argc, const char* argv[])
 {
     if (InitializeInstanceAndeDevice() == VK_SUCCESS)
     {
-        SimpleComputeTest();
-        AdvancedComputeTest();
+        if (s_supportShaderNonSemanticInfo)
+        {
+            SimpleComputeTest();
+            AdvancedComputeTest();
+            CLSPVSpecComputeTest();
+        }
+        else {
+            puts("The current device does not support `VK_KHR_shader_non_semantic_info` feature that is required by all the tests!");
+        }
     }
 
     DestroyInstanceAndDevice();

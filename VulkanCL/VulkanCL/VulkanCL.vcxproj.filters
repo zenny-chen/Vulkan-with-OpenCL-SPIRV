@@ -22,6 +22,9 @@
     <Filter Include="资源文件\shaders\advance">
       <UniqueIdentifier>{c0bc7e90-b273-48b0-b1ea-3fff9e98c147}</UniqueIdentifier>
     </Filter>
+    <Filter Include="资源文件\shaders\clspv_spec">
+      <UniqueIdentifier>{ff50f58a-a594-4365-910f-0dd8106e5322}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c">
@@ -58,6 +61,18 @@
     </None>
     <None Include="shaders\advance\build-spvasm.bat">
       <Filter>资源文件\shaders\advance</Filter>
+    </None>
+    <None Include="shaders\clspv_spec\build-spv.bat">
+      <Filter>资源文件\shaders\clspv_spec</Filter>
+    </None>
+    <None Include="shaders\clspv_spec\build-spvasm.bat">
+      <Filter>资源文件\shaders\clspv_spec</Filter>
+    </None>
+    <None Include="shaders\clspv_spec\clspv_spec.cl">
+      <Filter>资源文件\shaders\clspv_spec</Filter>
+    </None>
+    <None Include="shaders\clspv_spec\clspv_spec.spvasm">
+      <Filter>资源文件\shaders\clspv_spec</Filter>
     </None>
   </ItemGroup>
 </Project>
