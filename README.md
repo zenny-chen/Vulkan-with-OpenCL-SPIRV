@@ -7,4 +7,7 @@ This project is built with Visual Studio 2022 community edition. To run it, a [V
 
 If you want to build the OpenCL-C source into SPV destinations, please refer to this repository: [clspv](https://github.com/google/clspv)
 
+The SPV codes for **SimpleComputeTest** and **AdvancedComputeTest** have an equivalent to GLSL syntax. So they can be disassembled to GLSL code.
+
+While the SPV code for **CLSPVSpecComputeTest** is specific for SPIR-V and OpenCL features which can not be found on GLSL. So it cannot be disassembled to GLSL code.
 
