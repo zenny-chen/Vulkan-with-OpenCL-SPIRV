@@ -391,6 +391,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
 
     bool supportSubgroupSizeControl = false;
     bool supportCustomBorderColor = false;
+    bool supportVariablePointers = false;
     for (uint32_t i = 0; i < extPropCount; ++i)
     {
         // Here, just determine whether VK_EXT_subgroup_size_control and/or VK_EXT_custom_border_color feature is supported.
@@ -404,7 +405,9 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
             supportCustomBorderColor = true;
             puts("Current device supports `VK_EXT_custom_border_color` extension!");
         }
-        if (strcmp(extProps[i].extensionName, VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME) == 0) {
+        if (strcmp(extProps[i].extensionName, VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME) == 0)
+        {
+            supportVariablePointers = true;
             puts("Current device supports `VK_KHR_variable_pointers` extension!");
         }
         if (strcmp(extProps[i].extensionName, VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME) == 0)
@@ -551,12 +554,18 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     s_specQueueFamilyIndex = queue_info.queueFamilyIndex;
 
     uint32_t extCount = 0;
-    const char* extensionNames[2] = { NULL };
+    const char* extensionNames[4] = { NULL };
     if (supportSubgroupSizeControl) {
         extensionNames[extCount++] = VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
     }
     if (supportCustomBorderColor) {
         extensionNames[extCount++] = VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME;
+    }
+    if (supportVariablePointers) {
+        extensionNames[extCount++] = VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME;
+    }
+    if (s_supportShaderNonSemanticInfo) {
+        extensionNames[extCount++] = VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME;
     }
 
     // There are two ways to enable features:
