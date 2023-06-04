@@ -338,7 +338,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
         printf("Vulkan API version: %u.%u.%u\n", VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
         printf("Driver version: %08X\n", props.driverVersion);
     }
-    puts("Please choose which device to use...");
+    puts("\nPlease choose which device to use...");
 
 #ifdef _WIN32
     char inputBuffer[8] = { '\0' };
