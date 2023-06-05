@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c" />
+    <ClCompile Include="phys_buf_storage.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\advance\advance.cl" />
@@ -31,6 +32,10 @@
     <None Include="shaders\clspv_spec\build-spvasm.bat" />
     <None Include="shaders\clspv_spec\clspv_spec.cl" />
     <None Include="shaders\clspv_spec\clspv_spec.spvasm" />
+    <None Include="shaders\phys_buf_storage\buff_addr.cl" />
+    <None Include="shaders\phys_buf_storage\buff_addr.spvasm" />
+    <None Include="shaders\phys_buf_storage\build-spv.bat" />
+    <None Include="shaders\phys_buf_storage\build-spvasm.bat" />
     <None Include="shaders\simple\build-spv.bat" />
     <None Include="shaders\simple\build-spvasm.bat" />
     <None Include="shaders\simple\simple.cl" />

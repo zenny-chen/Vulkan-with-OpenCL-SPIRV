@@ -25,9 +25,15 @@
     <Filter Include="资源文件\shaders\clspv_spec">
       <UniqueIdentifier>{ff50f58a-a594-4365-910f-0dd8106e5322}</UniqueIdentifier>
     </Filter>
+    <Filter Include="资源文件\shaders\phys_buf_storage">
+      <UniqueIdentifier>{44836dfc-b5be-40ec-be49-43642238f00d}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="phys_buf_storage.c">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
@@ -73,6 +79,18 @@
     </None>
     <None Include="shaders\clspv_spec\clspv_spec.spvasm">
       <Filter>资源文件\shaders\clspv_spec</Filter>
+    </None>
+    <None Include="shaders\phys_buf_storage\buff_addr.cl">
+      <Filter>资源文件\shaders\phys_buf_storage</Filter>
+    </None>
+    <None Include="shaders\phys_buf_storage\buff_addr.spvasm">
+      <Filter>资源文件\shaders\phys_buf_storage</Filter>
+    </None>
+    <None Include="shaders\phys_buf_storage\build-spv.bat">
+      <Filter>资源文件\shaders\phys_buf_storage</Filter>
+    </None>
+    <None Include="shaders\phys_buf_storage\build-spvasm.bat">
+      <Filter>资源文件\shaders\phys_buf_storage</Filter>
     </None>
   </ItemGroup>
 </Project>

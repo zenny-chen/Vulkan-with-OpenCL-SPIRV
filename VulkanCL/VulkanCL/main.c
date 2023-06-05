@@ -64,6 +64,7 @@ static uint32_t s_specQueueFamilyIndex = 0;
 static VkPhysicalDeviceMemoryProperties s_memoryProperties = { 0 };
 
 static bool s_supportShaderNonSemanticInfo = false;
+static bool s_supportBufferDeviceAddress = false;
 
 static uint32_t s_maxWorkGroupSize = 0;
 
@@ -147,7 +148,7 @@ static VkResult init_global_layer_properties(void)
         res = init_global_extension_properties(i);
         if (res != VK_SUCCESS)
         {
-            printf("Query global extension properties error: %d\n", res);
+            fprintf(stderr, "Query global extension properties error: %d\n", res);
             break;
         }
     }
@@ -160,7 +161,7 @@ static VkResult InitializeInstance(void)
     VkResult result = init_global_layer_properties();
     if (result != VK_SUCCESS)
     {
-        printf("init_global_layer_properties failed: %d\n", result);
+        fprintf(stderr, "init_global_layer_properties failed: %d\n", result);
         return result;
     }
     printf("Found %u layer(s)...\n", s_layerCount);
@@ -208,7 +209,7 @@ static VkResult InitializeInstance(void)
         puts("cannot find a compatible Vulkan ICD");
     }
     else if (result != VK_SUCCESS) {
-        printf("vkCreateInstance failed: %d\n", result);
+        fprintf(stderr, "vkCreateInstance failed: %d\n", result);
     }
 
     return result;
@@ -306,7 +307,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     VkResult res = vkEnumeratePhysicalDevices(s_instance, &gpu_count, NULL);
     if (res != VK_SUCCESS)
     {
-        printf("vkEnumeratePhysicalDevices failed: %d\n", res);
+        fprintf(stderr, "vkEnumeratePhysicalDevices failed: %d\n", res);
         return res;
     }
 
@@ -317,7 +318,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     res = vkEnumeratePhysicalDevices(s_instance, &gpu_count, physicalDevices);
     if (res != VK_SUCCESS)
     {
-        printf("vkEnumeratePhysicalDevices failed: %d\n", res);
+        fprintf(stderr, "vkEnumeratePhysicalDevices failed: %d\n", res);
         return res;
     }
 
@@ -363,7 +364,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
 
     if (deviceIndex >= gpu_count)
     {
-        printf("Your input (%u) exceeds the max number of available devices (%u)\n", deviceIndex, gpu_count);
+        fprintf(stderr, "Your input (%u) exceeds the max number of available devices (%u)\n", deviceIndex, gpu_count);
         return VK_ERROR_DEVICE_LOST;
     }
     printf("You have chosen device[%u]...\n", deviceIndex);
@@ -373,7 +374,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     res = vkEnumerateDeviceExtensionProperties(physicalDevices[deviceIndex], NULL, &extPropCount, NULL);
     if (res != VK_SUCCESS)
     {
-        printf("vkEnumerateDeviceExtensionProperties for count failed: %d\n", res);
+        fprintf(stderr, "vkEnumerateDeviceExtensionProperties for count failed: %d\n", res);
         return res;
     }
     printf("The current selected physical device supports %u Vulkan extensions!\n", extPropCount);
@@ -385,16 +386,16 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     res = vkEnumerateDeviceExtensionProperties(physicalDevices[deviceIndex], NULL, &extPropCount, extProps);
     if (res != VK_SUCCESS)
     {
-        printf("vkEnumerateDeviceExtensionProperties for content failed: %d\n", res);
+        fprintf(stderr, "vkEnumerateDeviceExtensionProperties for content failed: %d\n", res);
         return res;
     }
 
     bool supportSubgroupSizeControl = false;
     bool supportCustomBorderColor = false;
     bool supportVariablePointers = false;
+    bool supportBufferDeviceAddressEXT = false;
     for (uint32_t i = 0; i < extPropCount; ++i)
     {
-        // Here, just determine whether VK_EXT_subgroup_size_control and/or VK_EXT_custom_border_color feature is supported.
         if (strcmp(extProps[i].extensionName, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) == 0)
         {
             supportSubgroupSizeControl = true;
@@ -415,6 +416,15 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
             puts("Current device supports `VK_KHR_shader_non_semantic_info` extension!");
             s_supportShaderNonSemanticInfo = true;
         }
+        if (strcmp(extProps[i].extensionName, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) == 0)
+        {
+            supportBufferDeviceAddressEXT = true;
+            puts("The current device fully supports `VK_KHR_buffer_device_address` extension!");
+        }
+    }
+
+    if (!supportBufferDeviceAddressEXT) {
+        puts("The current device does not fully support `VK_KHR_buffer_device_address` extension!");
     }
 
     // ==== The following is query the specific extension features in the feature chaining form ====
@@ -439,24 +449,49 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
         .pNext = &subgroupSizeControlFeature
     };
 
+    VkPhysicalDeviceBufferDeviceAddressFeatures deviceBufferAddresFeatures = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+        // link to variablePointersFeature node
+        .pNext = &variablePointersFeature
+    };
+
     // physical device feature 2
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         // link to variablePointersFeature node
-        .pNext = &variablePointersFeature
+        .pNext = &deviceBufferAddresFeatures
     };
 
     // Query all above features
     vkGetPhysicalDeviceFeatures2(physicalDevices[deviceIndex], &features2);
 
-    printf("Current device %s customBorderColors!\n", customBorderColorFeature.customBorderColors ? "supports" : "does not support");
-    printf("Current device %s customBorderColorWithoutFormat!\n", customBorderColorFeature.customBorderColorWithoutFormat ? "supports" : "does not support");
-    printf("Current device %s computeFullSubgroups\n", subgroupSizeControlFeature.computeFullSubgroups ? "supports" : "does not support");
-    printf("Current device %s subgroupSizeControl\n", subgroupSizeControlFeature.subgroupSizeControl ? "supports" : "does not support");
-    printf("Current device %s variablePointersStorageBuffer\n", variablePointersFeature.variablePointersStorageBuffer ? "supports" : "does not support");
-    printf("Current device %s variablePointers\n", variablePointersFeature.variablePointers ? "supports" : "does not support");
+    printf("Current device %s customBorderColors!\n", 
+        customBorderColorFeature.customBorderColors != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s customBorderColorWithoutFormat!\n",
+        customBorderColorFeature.customBorderColorWithoutFormat != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s computeFullSubgroups\n",
+        subgroupSizeControlFeature.computeFullSubgroups != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s subgroupSizeControl\n",
+        subgroupSizeControlFeature.subgroupSizeControl != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s variablePointersStorageBuffer\n",
+        variablePointersFeature.variablePointersStorageBuffer != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s variablePointers\n",
+        variablePointersFeature.variablePointers != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s bufferDeviceAddress\n",
+        deviceBufferAddresFeatures.bufferDeviceAddress != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s bufferDeviceAddressCaptureReplay\n",
+        deviceBufferAddresFeatures.bufferDeviceAddressCaptureReplay != VK_FALSE ? "supports" : "does not support");
+    printf("Current device %s bufferDeviceAddressMultiDevice\n",
+        deviceBufferAddresFeatures.bufferDeviceAddressMultiDevice != VK_FALSE ? "supports" : "does not support");
+
+    if (deviceBufferAddresFeatures.bufferDeviceAddress != VK_FALSE) {
+        s_supportBufferDeviceAddress = true;
+    }
 
     // Explicitly enable shaderInt64 feature because some GPUs (e.g. Intel Iris Graphics) may have not enabled it by default.
+    if (features2.features.shaderInt64 == VK_FALSE) {
+        puts("WARNING: shaderInt64 feature is not enabled by default. This feature will be enabled automatically...");
+    }
     features2.features.shaderInt64 = VK_TRUE;
 
     // ==== Query the current selected device properties corresponding the above features ====
@@ -554,7 +589,7 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     s_specQueueFamilyIndex = queue_info.queueFamilyIndex;
 
     uint32_t extCount = 0;
-    const char* extensionNames[4] = { NULL };
+    const char* extensionNames[5] = { NULL };
     if (supportSubgroupSizeControl) {
         extensionNames[extCount++] = VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
     }
@@ -566,6 +601,9 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
     }
     if (s_supportShaderNonSemanticInfo) {
         extensionNames[extCount++] = VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME;
+    }
+    if (supportBufferDeviceAddressEXT) {
+        extensionNames[extCount++] = VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
     }
 
     // There are two ways to enable features:
@@ -586,13 +624,13 @@ static VkResult InitializeDevice(VkQueueFlagBits queueFlag, VkPhysicalDeviceMemo
 
     res = vkCreateDevice(physicalDevices[deviceIndex], &device_info, NULL, &s_specDevice);
     if (res != VK_SUCCESS) {
-        printf("vkCreateDevice failed: %d\n", res);
+        fprintf(stderr, "vkCreateDevice failed: %d\n", res);
     }
 
     return res;
 }
 
-static VkResult InitializeCommandBuffer(uint32_t queueFamilyIndex, VkDevice device, VkCommandPool* pCommandPool,
+VkResult InitializeCommandBuffer(uint32_t queueFamilyIndex, VkDevice device, VkCommandPool* pCommandPool,
     VkCommandBuffer commandBuffers[], uint32_t commandBufferCount)
 {
     const VkCommandPoolCreateInfo cmd_pool_info = {
@@ -605,7 +643,7 @@ static VkResult InitializeCommandBuffer(uint32_t queueFamilyIndex, VkDevice devi
     VkResult res = vkCreateCommandPool(device, &cmd_pool_info, NULL, pCommandPool);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateCommandPool failed: %d\n", res);
+        fprintf(stderr, "vkCreateCommandPool failed: %d\n", res);
         return res;
     }
 
@@ -641,7 +679,7 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
     VkResult res = vkCreateBuffer(device, &hostBufCreateInfo, NULL, &deviceBuffers[0]);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateBuffer failed: %d\n", res);
+        fprintf(stderr, "vkCreateBuffer failed: %d\n", res);
         return res;
     }
 
@@ -676,14 +714,14 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
     res = vkAllocateMemory(device, &hostMemAllocInfo, NULL, &deviceMemories[0]);
     if (res != VK_SUCCESS)
     {
-        printf("vkAllocateMemory failed: %d\n", res);
+        fprintf(stderr, "vkAllocateMemory failed: %d\n", res);
         return res;
     }
 
     res = vkBindBufferMemory(device, deviceBuffers[0], deviceMemories[0], 0);
     if (res != VK_SUCCESS)
     {
-        printf("vkBindBufferMemory failed: %d\n", res);
+        fprintf(stderr, "vkBindBufferMemory failed: %d\n", res);
         return res;
     }
 
@@ -701,14 +739,14 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
     res = vkCreateBuffer(device, &deviceBufCreateInfo, NULL, &deviceBuffers[1]);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateBuffer failed: %d\n", res);
+        fprintf(stderr, "vkCreateBuffer failed: %d\n", res);
         return res;
     }
 
     res = vkCreateBuffer(device, &deviceBufCreateInfo, NULL, &deviceBuffers[2]);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateBuffer failed: %d\n", res);
+        fprintf(stderr, "vkCreateBuffer failed: %d\n", res);
         return res;
     }
 
@@ -743,21 +781,21 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
     res = vkAllocateMemory(device, &deviceMemAllocInfo, NULL, &deviceMemories[1]);
     if (res != VK_SUCCESS)
     {
-        printf("vkAllocateMemory failed: %d\n", res);
+        fprintf(stderr, "vkAllocateMemory failed: %d\n", res);
         return res;
     }
 
     res = vkBindBufferMemory(device, deviceBuffers[1], deviceMemories[1], 0);
     if (res != VK_SUCCESS)
     {
-        printf("vkBindBufferMemory failed: %d\n", res);
+        fprintf(stderr, "vkBindBufferMemory failed: %d\n", res);
         return res;
     }
 
     res = vkBindBufferMemory(device, deviceBuffers[2], deviceMemories[1], deviceMemBufRequirements.size);
     if (res != VK_SUCCESS)
     {
-        printf("vkBindBufferMemory failed: %d\n", res);
+        fprintf(stderr, "vkBindBufferMemory failed: %d\n", res);
         return res;
     }
 
@@ -767,7 +805,7 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
     res = vkMapMemory(device, deviceMemories[0], 0, bufferSize, 0, &hostBuffer);
     if (res != VK_SUCCESS)
     {
-        printf("vkMapMemory failed: %d\n", res);
+        fprintf(stderr, "vkMapMemory failed: %d\n", res);
         return res;
     }
     int* srcMem = hostBuffer;
@@ -810,7 +848,7 @@ static void WriteBufferAndSync(VkCommandBuffer commandBuffer, uint32_t queueFami
         0, NULL, 1, &bufferBarrier, 0, NULL);
 }
 
-static void SyncAndReadBuffer(VkCommandBuffer commandBuffer, uint32_t queueFamilyIndex, VkBuffer dstHostBuffer, VkBuffer srcDeviceBuffer, size_t size)
+void SyncAndReadBuffer(VkCommandBuffer commandBuffer, uint32_t queueFamilyIndex, VkBuffer dstHostBuffer, VkBuffer srcDeviceBuffer, size_t size)
 {
     const VkBufferMemoryBarrier bufferBarrier = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -840,12 +878,12 @@ static void SynchronizeExecution(VkCommandBuffer commandBuffer, uint32_t queueFa
         0, NULL, 0, NULL, 0, NULL);
 }
 
-static VkResult CreateShaderModule(VkDevice device, const char* fileName, VkShaderModule* pShaderModule)
+VkResult CreateShaderModule(VkDevice device, const char* fileName, VkShaderModule* pShaderModule)
 {
     FILE* fp = OpenFileWithRead(fileName);
     if (fp == NULL)
     {
-        printf("Shader file %s not found!\n", fileName);
+        fprintf(stderr, "Shader file %s not found!\n", fileName);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     fseek(fp, 0, SEEK_END);
@@ -868,7 +906,7 @@ static VkResult CreateShaderModule(VkDevice device, const char* fileName, VkShad
 
     VkResult res = vkCreateShaderModule(device, &moduleCreateInfo, NULL, pShaderModule);
     if (res != VK_SUCCESS) {
-        printf("vkCreateShaderModule failed: %d\n", res);
+        fprintf(stderr, "vkCreateShaderModule failed: %d\n", res);
     }
 
     free(codeBuffer);
@@ -892,7 +930,7 @@ static VkResult CreateComputePipelineSimple(VkDevice device, VkShaderModule comp
     VkResult res = vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, NULL, pDescLayout);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateDescriptorSetLayout failed: %d\n", res);
+        fprintf(stderr, "vkCreateDescriptorSetLayout failed: %d\n", res);
         return res;
     }
 
@@ -918,7 +956,7 @@ static VkResult CreateComputePipelineSimple(VkDevice device, VkShaderModule comp
     res = vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, NULL, pPipelineLayout);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreatePipelineLayout failed: %d\n", res);
+        fprintf(stderr, "vkCreatePipelineLayout failed: %d\n", res);
         return res;
     }
 
@@ -974,7 +1012,7 @@ static VkResult CreateComputePipelineSimple(VkDevice device, VkShaderModule comp
     };
     res = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, NULL, pComputePipeline);
     if (res != VK_SUCCESS) {
-        printf("vkCreateComputePipelines failed: %d\n", res);
+        fprintf(stderr, "vkCreateComputePipelines failed: %d\n", res);
     }
 
     return res;
@@ -1002,7 +1040,7 @@ static VkResult CreateComputePipelineAdvanced(VkDevice device, VkShaderModule co
     VkResult res = vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, NULL, pDescLayout);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateDescriptorSetLayout failed: %d\n", res);
+        fprintf(stderr, "vkCreateDescriptorSetLayout failed: %d\n", res);
         return res;
     }
 
@@ -1028,7 +1066,7 @@ static VkResult CreateComputePipelineAdvanced(VkDevice device, VkShaderModule co
     res = vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, NULL, pPipelineLayout);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreatePipelineLayout failed: %d\n", res);
+        fprintf(stderr, "vkCreatePipelineLayout failed: %d\n", res);
         return res;
     }
 
@@ -1090,7 +1128,7 @@ static VkResult CreateComputePipelineAdvanced(VkDevice device, VkShaderModule co
     };
     res = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, NULL, pComputePipeline);
     if (res != VK_SUCCESS) {
-        printf("vkCreateComputePipelines failed: %d\n", res);
+        fprintf(stderr, "vkCreateComputePipelines failed: %d\n", res);
     }
 
     return res;
@@ -1112,7 +1150,7 @@ static VkResult CreateComputePipelineCLSPVSpec(VkDevice device, VkShaderModule c
     VkResult res = vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, NULL, pDescLayout);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateDescriptorSetLayout failed: %d\n", res);
+        fprintf(stderr, "vkCreateDescriptorSetLayout failed: %d\n", res);
         return res;
     }
 
@@ -1138,7 +1176,7 @@ static VkResult CreateComputePipelineCLSPVSpec(VkDevice device, VkShaderModule c
     res = vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, NULL, pPipelineLayout);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreatePipelineLayout failed: %d\n", res);
+        fprintf(stderr, "vkCreatePipelineLayout failed: %d\n", res);
         return res;
     }
 
@@ -1245,7 +1283,7 @@ static VkResult CreateComputePipelineCLSPVSpec(VkDevice device, VkShaderModule c
     res = vkCreateComputePipelines(device, VK_NULL_HANDLE, 2,
         (const VkComputePipelineCreateInfo[]) { computePipelineCreateInfoForInc, computePipelineCreateInfoForDouble }, NULL, computePipelines);
     if (res != VK_SUCCESS) {
-        printf("vkCreateComputePipelines failed: %d\n", res);
+        fprintf(stderr, "vkCreateComputePipelines failed: %d\n", res);
     }
 
     return res;
@@ -1267,7 +1305,7 @@ static VkResult CreateDescriptorSets(VkDevice device, const VkBuffer deviceBuffe
     VkResult res = vkCreateDescriptorPool(device, &descriptorPoolInfo, NULL, pDescriptorPool);
     if (res != VK_SUCCESS)
     {
-        printf("vkCreateDescriptorPool failed: %d\n", res);
+        fprintf(stderr, "vkCreateDescriptorPool failed: %d\n", res);
         return res;
     }
 
@@ -1281,7 +1319,7 @@ static VkResult CreateDescriptorSets(VkDevice device, const VkBuffer deviceBuffe
     res = vkAllocateDescriptorSets(device, &descAllocInfo, pDescSets);
     if (res != VK_SUCCESS)
     {
-        printf("vkAllocateDescriptorSets failed: %d\n", res);
+        fprintf(stderr, "vkAllocateDescriptorSets failed: %d\n", res);
         return res;
     }
 
@@ -1336,13 +1374,13 @@ static VkResult InitializeInstanceAndeDevice(void)
     VkResult result = InitializeInstance();
     if (result != VK_SUCCESS)
     {
-        puts("InitializeInstance failed!");
+        fprintf(stderr, "InitializeInstance failed!\n");
         return result;
     }
 
     result = InitializeDevice(VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT, &s_memoryProperties);
     if (result != VK_SUCCESS) {
-        puts("InitializeDevice failed!");
+        fprintf(stderr, "InitializeDevice failed!\n");
     }
 
     return result;
@@ -1383,21 +1421,21 @@ static void SimpleComputeTest(void)
         VkResult result = AllocateMemoryAndBuffers(s_specDevice, &s_memoryProperties, deviceMemories, deviceBuffers, bufferSize, s_specQueueFamilyIndex);
         if (result != VK_SUCCESS)
         {
-            puts("AllocateMemoryAndBuffers failed!");
+            fprintf(stderr, "AllocateMemoryAndBuffers failed!\n");
             break;
         }
 
         result = CreateShaderModule(s_specDevice, "shaders/simple/simple.spv", &computeShaderModule);
         if (result != VK_SUCCESS)
         {
-            puts("CreateShaderModule failed!");
+            fprintf(stderr, "CreateShaderModule failed!\n");
             break;
         }
 
         result = CreateComputePipelineSimple(s_specDevice, computeShaderModule, &computePipeline, &pipelineLayout, &descriptorSetLayout);
         if (result != VK_SUCCESS)
         {
-            puts("CreateComputePipeline failed!");
+            fprintf(stderr, "CreateComputePipeline failed!\n");
             break;
         }
 
@@ -1407,14 +1445,14 @@ static void SimpleComputeTest(void)
         result = CreateDescriptorSets(s_specDevice, &deviceBuffers[1], bufferSize, descriptorSetLayout, &descriptorPool, &descriptorSet);
         if (result != VK_SUCCESS)
         {
-            puts("CreateDescriptorSets failed!");
+            fprintf(stderr, "CreateDescriptorSets failed!\n");
             break;
         }
 
         result = InitializeCommandBuffer(s_specQueueFamilyIndex, s_specDevice, &commandPool, commandBuffers, commandBufferCount);
         if (result != VK_SUCCESS)
         {
-            puts("InitializeCommandBuffer failed!");
+            fprintf(stderr, "InitializeCommandBuffer failed!\n");
             break;
         }
 
@@ -1430,7 +1468,7 @@ static void SimpleComputeTest(void)
         result = vkBeginCommandBuffer(commandBuffers[0], &cmdBufBeginInfo);
         if (result != VK_SUCCESS)
         {
-            printf("vkBeginCommandBuffer failed: %d\n", result);
+            fprintf(stderr, "vkBeginCommandBuffer failed: %d\n", result);
             break;
         }
 
@@ -1450,7 +1488,7 @@ static void SimpleComputeTest(void)
         result = vkEndCommandBuffer(commandBuffers[0]);
         if (result != VK_SUCCESS)
         {
-            printf("vkEndCommandBuffer failed: %d\n", result);
+            fprintf(stderr, "vkEndCommandBuffer failed: %d\n", result);
             break;
         }
 
@@ -1462,7 +1500,7 @@ static void SimpleComputeTest(void)
         result = vkCreateFence(s_specDevice, &fenceCreateInfo, NULL, &fence);
         if (result != VK_SUCCESS)
         {
-            printf("vkCreateFence failed: %d\n", result);
+            fprintf(stderr, "vkCreateFence failed: %d\n", result);
             break;
         }
 
@@ -1480,14 +1518,14 @@ static void SimpleComputeTest(void)
         result = vkQueueSubmit(queue, 1, &submit_info, fence);
         if (result != VK_SUCCESS)
         {
-            printf("vkQueueSubmit failed: %d\n", result);
+            fprintf(stderr, "vkQueueSubmit failed: %d\n", result);
             break;
         }
 
         result = vkWaitForFences(s_specDevice, 1, &fence, VK_TRUE, UINT64_MAX);
         if (result != VK_SUCCESS)
         {
-            printf("vkWaitForFences failed: %d\n", result);
+            fprintf(stderr, "vkWaitForFences failed: %d\n", result);
             break;
         }
 
@@ -1496,7 +1534,7 @@ static void SimpleComputeTest(void)
         result = vkMapMemory(s_specDevice, deviceMemories[0], 0, bufferSize, 0, &hostBuffer);
         if (result != VK_SUCCESS)
         {
-            printf("vkMapMemory failed: %d\n", result);
+            fprintf(stderr, "vkMapMemory failed: %d\n", result);
             break;
         }
         int* dstMem = hostBuffer;
@@ -1504,7 +1542,7 @@ static void SimpleComputeTest(void)
         {
             if (dstMem[i] != i + 100)
             {
-                printf("Result error @ %d, result is: %d\n", i, dstMem[i]);
+                fprintf(stderr, "Result error @ %d, result is: %d\n", i, dstMem[i]);
                 break;
             }
         }
@@ -1589,21 +1627,21 @@ static void AdvancedComputeTest(void)
         VkResult result = AllocateMemoryAndBuffers(s_specDevice, &s_memoryProperties, deviceMemories, deviceBuffers, bufferSize, s_specQueueFamilyIndex);
         if (result != VK_SUCCESS)
         {
-            puts("AllocateMemoryAndBuffers failed!");
+            fprintf(stderr, "AllocateMemoryAndBuffers failed!\n");
             break;
         }
 
         result = CreateShaderModule(s_specDevice, "shaders/advance/advance.spv", &computeShaderModule);
         if (result != VK_SUCCESS)
         {
-            puts("CreateShaderModule failed!");
+            fprintf(stderr, "CreateShaderModule failed!\n");
             break;
         }
 
         result = CreateComputePipelineAdvanced(s_specDevice, computeShaderModule, elemCount, &computePipeline, &pipelineLayout, &descriptorSetLayout);
         if (result != VK_SUCCESS)
         {
-            puts("CreateComputePipeline failed!");
+            fprintf(stderr, "CreateComputePipeline failed!\n");
             break;
         }
 
@@ -1613,14 +1651,14 @@ static void AdvancedComputeTest(void)
         result = CreateDescriptorSets(s_specDevice, &deviceBuffers[1], bufferSize, descriptorSetLayout, &descriptorPool, &descriptorSet);
         if (result != VK_SUCCESS)
         {
-            puts("CreateDescriptorSets failed!");
+            fprintf(stderr, "CreateDescriptorSets failed!\n");
             break;
         }
 
         result = InitializeCommandBuffer(s_specQueueFamilyIndex, s_specDevice, &commandPool, commandBuffers, commandBufferCount);
         if (result != VK_SUCCESS)
         {
-            puts("InitializeCommandBuffer failed!");
+            fprintf(stderr, "InitializeCommandBuffer failed!\n");
             break;
         }
 
@@ -1636,7 +1674,7 @@ static void AdvancedComputeTest(void)
         result = vkBeginCommandBuffer(commandBuffers[0], &cmdBufBeginInfo);
         if (result != VK_SUCCESS)
         {
-            printf("vkBeginCommandBuffer failed: %d\n", result);
+            fprintf(stderr, "vkBeginCommandBuffer failed: %d\n", result);
             break;
         }
 
@@ -1662,7 +1700,7 @@ static void AdvancedComputeTest(void)
         result = vkEndCommandBuffer(commandBuffers[0]);
         if (result != VK_SUCCESS)
         {
-            printf("vkEndCommandBuffer failed: %d\n", result);
+            fprintf(stderr, "vkEndCommandBuffer failed: %d\n", result);
             break;
         }
 
@@ -1674,7 +1712,7 @@ static void AdvancedComputeTest(void)
         result = vkCreateFence(s_specDevice, &fenceCreateInfo, NULL, &fence);
         if (result != VK_SUCCESS)
         {
-            printf("vkCreateFence failed: %d\n", result);
+            fprintf(stderr, "vkCreateFence failed: %d\n", result);
             break;
         }
 
@@ -1692,14 +1730,14 @@ static void AdvancedComputeTest(void)
         result = vkQueueSubmit(queue, 1, &submit_info, fence);
         if (result != VK_SUCCESS)
         {
-            printf("vkQueueSubmit failed: %d\n", result);
+            fprintf(stderr, "vkQueueSubmit failed: %d\n", result);
             break;
         }
 
         result = vkWaitForFences(s_specDevice, 1, &fence, VK_TRUE, UINT64_MAX);
         if (result != VK_SUCCESS)
         {
-            printf("vkWaitForFences failed: %d\n", result);
+            fprintf(stderr, "vkWaitForFences failed: %d\n", result);
             break;
         }
 
@@ -1708,7 +1746,7 @@ static void AdvancedComputeTest(void)
         result = vkMapMemory(s_specDevice, deviceMemories[0], 0, bufferSize, 0, &hostBuffer);
         if (result != VK_SUCCESS)
         {
-            printf("vkMapMemory failed: %d\n", result);
+            fprintf(stderr, "vkMapMemory failed: %d\n", result);
             break;
         }
         int* dstMem = hostBuffer;
@@ -1726,7 +1764,7 @@ static void AdvancedComputeTest(void)
                 const int value = (index % 256) < 128 ? sum : 0;
                 if (dstMem[index] != (index + value) * 8)
                 {
-                    printf("Result error @ %d, result is: %d, correct is: %d\n", index, dstMem[index], (index + value) * 8);
+                    fprintf(stderr, "Result error @ %d, result is: %d, correct is: %d\n", index, dstMem[index], (index + value) * 8);
                     successful = false;
                     break;
                 }
@@ -1742,7 +1780,7 @@ static void AdvancedComputeTest(void)
         result = vkWaitForFences(s_specDevice, 1, &fence, VK_TRUE, UINT64_MAX);
         if (result != VK_SUCCESS)
         {
-            printf("vkWaitForFences failed: %d\n", result);
+            fprintf(stderr, "vkWaitForFences failed: %d\n", result);
             break;
         }
 
@@ -1814,14 +1852,14 @@ static void CLSPVSpecComputeTest(void)
         VkResult result = AllocateMemoryAndBuffers(s_specDevice, &s_memoryProperties, deviceMemories, deviceBuffers, bufferSize, s_specQueueFamilyIndex);
         if (result != VK_SUCCESS)
         {
-            puts("AllocateMemoryAndBuffers failed!");
+            fprintf(stderr, "AllocateMemoryAndBuffers failed!\n");
             break;
         }
 
         result = CreateShaderModule(s_specDevice, "shaders/clspv_spec/clspv_spec.spv", &computeShaderModule);
         if (result != VK_SUCCESS)
         {
-            puts("CreateShaderModule failed!");
+            fprintf(stderr, "CreateShaderModule failed!\n");
             break;
         }
 
@@ -1832,7 +1870,7 @@ static void CLSPVSpecComputeTest(void)
             maxWorkGroupSizeForInc, maxWorkGroupSizeForDouble);
         if (result != VK_SUCCESS)
         {
-            puts("CreateComputePipeline failed!");
+            fprintf(stderr, "CreateComputePipeline failed!\n");
             break;
         }
 
@@ -1845,7 +1883,7 @@ static void CLSPVSpecComputeTest(void)
         result = CreateDescriptorSets(s_specDevice, deviceBufferArrayForInc, bufferSize, descriptorSetLayout, &descriptorPoolForInc, &descriptorSetForInc);
         if (result != VK_SUCCESS)
         {
-            puts("CreateDescriptorSets for IncKernel failed!");
+            fprintf(stderr, "CreateDescriptorSets for IncKernel failed!");
             break;
         }
 
@@ -1858,14 +1896,14 @@ static void CLSPVSpecComputeTest(void)
         result = CreateDescriptorSets(s_specDevice, deviceBufferArrayForDouble, bufferSize, descriptorSetLayout, &descriptorPoolForDouble, &descriptorSetForDouble);
         if (result != VK_SUCCESS)
         {
-            puts("CreateDescriptorSets for DoubleKernel failed!");
+            fprintf(stderr, "CreateDescriptorSets for DoubleKernel failed!");
             break;
         }
 
         result = InitializeCommandBuffer(s_specQueueFamilyIndex, s_specDevice, &commandPool, commandBuffers, commandBufferCount);
         if (result != VK_SUCCESS)
         {
-            puts("InitializeCommandBuffer failed!");
+            fprintf(stderr, "InitializeCommandBuffer failed!");
             break;
         }
 
@@ -1881,7 +1919,7 @@ static void CLSPVSpecComputeTest(void)
         result = vkBeginCommandBuffer(commandBuffers[0], &cmdBufBeginInfo);
         if (result != VK_SUCCESS)
         {
-            printf("vkBeginCommandBuffer failed: %d\n", result);
+            fprintf(stderr, "vkBeginCommandBuffer failed: %d\n", result);
             break;
         }
 
@@ -1909,7 +1947,7 @@ static void CLSPVSpecComputeTest(void)
         result = vkEndCommandBuffer(commandBuffers[0]);
         if (result != VK_SUCCESS)
         {
-            printf("vkEndCommandBuffer failed: %d\n", result);
+            fprintf(stderr, "vkEndCommandBuffer failed: %d\n", result);
             break;
         }
 
@@ -1921,7 +1959,7 @@ static void CLSPVSpecComputeTest(void)
         result = vkCreateFence(s_specDevice, &fenceCreateInfo, NULL, &fence);
         if (result != VK_SUCCESS)
         {
-            printf("vkCreateFence failed: %d\n", result);
+            fprintf(stderr, "vkCreateFence failed: %d\n", result);
             break;
         }
 
@@ -1939,14 +1977,14 @@ static void CLSPVSpecComputeTest(void)
         result = vkQueueSubmit(queue, 1, &submit_info, fence);
         if (result != VK_SUCCESS)
         {
-            printf("vkQueueSubmit failed: %d\n", result);
+            fprintf(stderr, "vkQueueSubmit failed: %d\n", result);
             break;
         }
 
         result = vkWaitForFences(s_specDevice, 1, &fence, VK_TRUE, UINT64_MAX);
         if (result != VK_SUCCESS)
         {
-            printf("vkWaitForFences failed: %d\n", result);
+            fprintf(stderr, "vkWaitForFences failed: %d\n", result);
             break;
         }
 
@@ -1955,7 +1993,7 @@ static void CLSPVSpecComputeTest(void)
         result = vkMapMemory(s_specDevice, deviceMemories[0], 0, bufferSize, 0, &hostBuffer);
         if (result != VK_SUCCESS)
         {
-            printf("vkMapMemory failed: %d\n", result);
+            fprintf(stderr, "vkMapMemory failed: %d\n", result);
             break;
         }
         int* dstMem = hostBuffer;
@@ -1963,7 +2001,7 @@ static void CLSPVSpecComputeTest(void)
         {
             if (dstMem[i] != (i + 256) * 2)
             {
-                printf("Result error @ %d, result is: %d\n", i, dstMem[i]);
+                fprintf(stderr, "Result error @ %d, result is: %d\n", i, dstMem[i]);
                 break;
             }
         }
@@ -2019,6 +2057,9 @@ static void CLSPVSpecComputeTest(void)
     puts("\n================ Complete OpenCL with SPIR-V specific test ================\n");
 }
 
+extern void BufferAddressComputeTest(VkDevice specDevice, const VkPhysicalDeviceMemoryProperties* pMemoryProperties,
+    uint32_t specQueueFamilyIndex, uint32_t maxWorkGroupSize);
+
 int main(int argc, const char* argv[])
 {
     if (InitializeInstanceAndeDevice() == VK_SUCCESS)
@@ -2028,9 +2069,10 @@ int main(int argc, const char* argv[])
             SimpleComputeTest();
             AdvancedComputeTest();
             CLSPVSpecComputeTest();
+            BufferAddressComputeTest(s_specDevice, &s_memoryProperties, s_specQueueFamilyIndex, s_maxWorkGroupSize);
         }
         else {
-            puts("The current device does not support `VK_KHR_shader_non_semantic_info` feature that is required by all the tests!");
+            fprintf(stderr, "The current device does not support `VK_KHR_shader_non_semantic_info` feature that is required by all the tests!\n");
         }
     }
 
