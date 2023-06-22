@@ -15,6 +15,10 @@
 
 #include <vulkan/vulkan.h>
 
+#ifndef max
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#endif // !max
+
 
 enum
 {
@@ -136,7 +140,7 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
     vkGetBufferMemoryRequirements(device, deviceBuffers[1], &deviceMemBufRequirements);
 
     // two memory buffers share one device local memory.
-    const VkDeviceSize deviceMemTotalSize = deviceMemBufRequirements.size * 2;
+    const VkDeviceSize deviceMemTotalSize = max(bufferSize * 2, deviceMemBufRequirements.size);
     // Find device local property memory type index
     for (memoryTypeIndex = 0; memoryTypeIndex < pMemoryProperties->memoryTypeCount; memoryTypeIndex++)
     {
@@ -182,7 +186,7 @@ static VkResult AllocateMemoryAndBuffers(VkDevice device, const VkPhysicalDevice
         return res;
     }
 
-    res = vkBindBufferMemory(device, deviceBuffers[2], deviceMemories[1], deviceMemBufRequirements.size);
+    res = vkBindBufferMemory(device, deviceBuffers[2], deviceMemories[1], bufferSize);
     if (res != VK_SUCCESS)
     {
         fprintf(stderr, "vkBindBufferMemory failed: %d\n", res);
